@@ -1,10 +1,12 @@
 import csv
+import re
 
 #A script to deal with a particular excel sheet giving me info about feeds and clients
 #one of the problems is that repeated fields are left blank, need to add these back in.
 csvinput = open ('feeds-clients.csv')
 reader = csv.DictReader(csvinput)
-fieldnames=reader.fieldnames + ['Service', 'Name', 'Level', 'Ref', 'L1', 'MBL', 'MBO', 'Flavor']
+#fieldnames=reader.fieldnames + ['Service', 'Name', 'EID', 'Level', 'Ref', 'L1', 'MBL', 'MBO', 'Flavor']
+fieldnames=reader.fieldnames + ['Service', 'Name', 'EID', 'Level', 'Depth', 'Flavor']
 
 csvoutput = open('feeds-clients-modified.csv', "w")
 writer = csv.DictWriter(csvoutput, fieldnames)
@@ -26,7 +28,7 @@ for row in reader:
     else:
         dict = row
 
-    #My sheet has rows that show subtotals from sections above - remove these, I'll calculate them myself.
+    #My sheet has rows that show subtotals from sections above - remove these, I'll calculate them myself if I want them.
     if ("Total" in dict['Product']) or ("Total" in dict['Datacenter']):
         #print('skipping: ', end=None)
         #print(dict)
@@ -41,40 +43,63 @@ for row in reader:
         #   e.g. ConsolidatedFEED Business Model - Per Feed
         if ("ConsolidatedFEED Business Model" in dict['Service']):
             dict['Name'] = details[1]
+        
         else:
+        #   e.g.: QuantFEED Market Data - Vienna Cash Market & Structured Products RapidADH - CERT (1121:VIR) - Ref, L1 - Real-Time
         #   e.g.: "QuantFEED Market Data - Cboe Europe BXE and CXE (1007:BAE) - Ref, L1, L2 MBL Depth10 - Real-Time"
+        #   Need to separate out:
         #   Service: QuantFEED Market Data
         #   Name: Cboe Europe BXE and CXE
+        #   CERT: y/n
         #   EID: (1007:BAE)
         #   Level: Ref, L1, L2 MBL Depth10
         #   Flavor: Real-Time
-            dict['Name'] = details[1]
-            dict['Level'] = details[2]
 
-            #If there is only ref data, there is no separate flavor field.
-            if dict['Level'] == 'Ref':
-                None
+            dict['Name'] = details[1]
+            
+            #easiest to use regex to extract the EID
+            EID = re.search(r"\(.*?\)", details[1])
+            if (EID):
+                dict['EID'] = EID.group(0)
             else:
+                dict['EID'] = "NOMATCH"
+
+            level = details[2]
+            
+            #If there is only ref data, there is no separate flavor field
+            if level != 'Ref':
                 dict['Flavor'] = details[3]
 
-            #now convert the 'level' field into a map of which levels are supported
-            for level in dict['Level'].split(", "):
-                if "Ref" in level:
-                    dict['Ref'] = 'y'
+            #now unroll (canonicalise) the 'level' field, writing a separate line for each level.
+            written = False
+            for lvl in level.split(", "):
+                if "Ref" in lvl:
+                    dict['Level'] = 'Ref'
+                    writer.writerow(dict)
+                    written = True
 
-                if "L1" in level:
-                    dict['L1'] = 'y'
+                if "L1" in lvl:
+                    dict['Level'] = 'L1'
+                    writer.writerow(dict)
+                    written = True
                 
-                if "MBO" in level:
-                    dict['MBO'] = 'y'
+                if "MBO" in lvl:
+                    dict['Level'] = 'MBO'
+                    writer.writerow(dict)
+                    written = True
             
-                if "MBL" in level:
+                if "MBL" in lvl:
+                    dict['Level'] = 'MBL'
                     #extract the number of levels of MBL
-                    dict['MBL'] = level.replace("L2 MBL Depth", "")
-                
+                    dict['Depth'] = lvl.replace("L2 MBL Depth", "")
+                    writer.writerow(dict)
+                    written = True
 
-        writer.writerow(dict)
+        if not (written):
+            dict['Level'] = 'NOLEVEL'
+            writer.writerow(dict)
 
+    #remember this as the last row so that undefined values can be carried forward.
     lastrow = dict
     
 
